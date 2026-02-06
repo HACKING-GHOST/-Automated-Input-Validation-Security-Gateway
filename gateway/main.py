@@ -2,11 +2,12 @@
 import argparse
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Iterable, List, Dict, Any
+from typing import Iterable, List, Dict, Any, Optional
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,7 @@ RULES: List[Rule] = [
         name="COMMAND_INJECTION",
         severity="high",
         description="Shell control operators often used for command injection.",
-        patterns=[r";", r"&&", r"\|\|", r"\|", r"`", r"\$\("]
+        patterns=[r";", r"&&", r"\|\|", r"\|", r"`", r"\$\("],
     ),
     Rule(
         name="XSS_SCRIPT",
@@ -107,6 +108,21 @@ def build_report(raw_text: str, normalized_text: str, hits: List[Dict[str, Any]]
     }
 
 
+def build_error_report(message: str, source: str = "cli") -> Dict[str, Any]:
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "decision": "block",
+        "score": 100,
+        "error": {
+            "source": source,
+            "message": message,
+        },
+        "explanation": {
+            "summary": "Fail-safe block due to input or runtime error.",
+        },
+    }
+
+
 def log_report(report: Dict[str, Any], log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
@@ -114,29 +130,43 @@ def log_report(report: Dict[str, Any], log_path: Path) -> None:
 
 
 def load_input(args: argparse.Namespace) -> str:
-    if args.text:
+    if args.text is not None:
         return args.text
-    if args.file:
+    if args.file is not None:
         return Path(args.file).read_text(encoding="utf-8")
     raise ValueError("Provide --text or --file")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Automated Input Validation & Security Gateway")
-    parser.add_argument("--text", help="Raw input text to evaluate")
-    parser.add_argument("--file", help="Path to a file containing input")
     parser.add_argument("--log", default="logs/audit.jsonl", help="Path to JSONL log file")
-    return parser.parse_args()
+
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--text", help="Raw input text to evaluate")
+    input_group.add_argument("--file", help="Path to a file containing input")
+
+    return parser.parse_args(argv)
 
 
 def main() -> None:
-    args = parse_args()
-    raw_text = load_input(args)
-    normalized = normalize_text(raw_text)
-    hits = validate_text(normalized)
-    report = build_report(raw_text, normalized, hits)
-    log_report(report, Path(args.log))
-    print(json.dumps(report, indent=2))
+    try:
+        args = parse_args()
+        raw_text = load_input(args)
+        normalized = normalize_text(raw_text)
+        hits = validate_text(normalized)
+        report = build_report(raw_text, normalized, hits)
+        log_report(report, Path(args.log))
+        print(json.dumps(report, indent=2))
+    except Exception as exc:  # fail-safe: block and explain instead of traceback
+        log_path = Path("logs/audit.jsonl")
+        if "args" in locals() and getattr(args, "log", None):
+            log_path = Path(args.log)
+        error_report = build_error_report(str(exc), source="runtime")
+        try:
+            log_report(error_report, log_path)
+        finally:
+            print(json.dumps(error_report, indent=2), file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
