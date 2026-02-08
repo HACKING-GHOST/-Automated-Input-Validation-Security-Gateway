@@ -49,11 +49,22 @@ def _escalate_decision(current: str, ai_recommended: str) -> str:
     return ai_recommended if order[ai_recommended] > order.get(current, 0) else current
 
 
+def _safe_write_error(logger: GatewayLogger | None, error: dict) -> None:
+    if logger is None:
+        return
+    try:
+        logger.write_jsonl(error)
+    except Exception:
+        return
+
+
 def run_scan(args: argparse.Namespace, cfg: dict) -> int:
-    logger = GatewayLogger(cfg["log_path"], cfg["db_path"])
-    logger.init_db()
+    logger: GatewayLogger | None = None
 
     try:
+        logger = GatewayLogger(cfg["log_path"], cfg["db_path"])
+        logger.init_db()
+
         raw_text = _load_scan_text(args)
         if len(raw_text) > int(cfg["max_input_chars"]):
             raise ValueError(f"Input exceeds max_input_chars={cfg['max_input_chars']}")
@@ -78,7 +89,7 @@ def run_scan(args: argparse.Namespace, cfg: dict) -> int:
         return 0
     except Exception as exc:
         error = build_error_report(str(exc))
-        logger.write_jsonl(error)
+        _safe_write_error(logger, error)
         print(json.dumps(error, indent=2), file=sys.stderr)
         return 1
 

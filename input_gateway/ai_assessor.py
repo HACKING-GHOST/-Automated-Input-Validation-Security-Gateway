@@ -5,6 +5,9 @@ from typing import Any, Dict
 from urllib import request
 
 
+VALID_DECISIONS = {"allow", "warn", "block"}
+
+
 def ai_assess(raw_text: str, current_report: Dict[str, Any], ai_cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not ai_cfg.get("enabled", False):
         return {"enabled": False}
@@ -47,15 +50,33 @@ def ai_assess(raw_text: str, current_report: Dict[str, Any], ai_cfg: Dict[str, A
         with request.urlopen(req, timeout=timeout_s) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         content = body.get("choices", [{}])[0].get("message", {}).get("content", "")
-        parsed = json.loads(content) if isinstance(content, str) and content.strip().startswith("{") else {
-            "recommended_decision": "warn",
-            "confidence": 0.5,
-            "explanation": "AI response was non-JSON; defaulted.",
-        }
+        if not isinstance(content, str):
+            return {
+                "enabled": True,
+                "status": "invalid_response",
+                "reason": "AI response content is not text",
+            }
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return {
+                "enabled": True,
+                "status": "invalid_response",
+                "reason": "AI response was not valid JSON",
+            }
+
+        recommended = str(parsed.get("recommended_decision", "")).lower()
+        if recommended not in VALID_DECISIONS:
+            return {
+                "enabled": True,
+                "status": "invalid_response",
+                "reason": "AI recommended_decision was missing or invalid",
+            }
+
         return {
             "enabled": True,
             "status": "ok",
-            "recommended_decision": parsed.get("recommended_decision", "warn"),
+            "recommended_decision": recommended,
             "confidence": parsed.get("confidence", 0.5),
             "explanation": parsed.get("explanation", "No explanation."),
         }

@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import List, Dict, Any
 
+VALID_SEVERITIES = {"low", "medium", "high"}
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -23,11 +25,12 @@ DEFAULT_RULES: list[Rule] = [
 
 
 def _make_hit(rule: str, severity: str, reason: str, matched: str, severity_weights: Dict[str, float], mitre: list[str]) -> Dict[str, Any]:
+    weight = float(severity_weights.get(severity, 0.0))
     return {
         "rule": rule,
         "severity": severity,
-        "severity_weight": float(severity_weights.get(severity, 0.0)),
-        "score": float(severity_weights.get(severity, 0.0)),
+        "severity_weight": weight,
+        "score": weight,
         "reason": reason,
         "matched": matched,
         "mitre_techniques": mitre,
@@ -53,11 +56,26 @@ def _repetition_rules(text: str, severity_weights: Dict[str, float]) -> list[Dic
     return hits
 
 
+def _normalize_override_severity(override_severity: Any, default_severity: str) -> tuple[str, bool]:
+    if not isinstance(override_severity, str):
+        return default_severity, False
+    candidate = override_severity.strip().lower()
+    if candidate in VALID_SEVERITIES:
+        return candidate, True
+    return default_severity, False
+
+
 def _override(rule_name: str, severity: str, description: str, mitre_overrides: Dict[str, Any]) -> tuple[str, str]:
     override = mitre_overrides.get(rule_name, {})
     if not isinstance(override, dict):
         return severity, description
-    return str(override.get("severity", severity)), str(override.get("description", description))
+
+    chosen_severity, _ = _normalize_override_severity(override.get("severity"), severity)
+    chosen_description = override.get("description", description)
+    if not isinstance(chosen_description, str):
+        chosen_description = description
+
+    return chosen_severity, chosen_description
 
 
 def evaluate_rules(text: str, severity_weights: Dict[str, float], mitre_overrides: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
