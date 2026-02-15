@@ -57,4 +57,9 @@ def load_config(config_path: str | None) -> Dict[str, Any]:
             merged[key] = {**DEFAULT_CONFIG[key], **value}
         else:
             merged[key] = value
+
+    legacy = merged.get("mitre_overrides")
+    if "rule_overrides" not in custom and isinstance(legacy, dict):
+        merged["rule_overrides"] = legacy
+
     return merged

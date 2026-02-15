@@ -91,4 +91,5 @@ pytest -q
 
 - `scan` now wraps logger initialization inside the fail-safe path so DB/path failures still return structured JSON block errors (no traceback leaks).
 - `rule_overrides` severity values are normalized/validated; invalid values fall back to the rule default severity, preventing accidental zero-risk bypasses.
+- Backward compatibility is preserved: legacy `mitre_overrides` configs are still honored when `rule_overrides` is not provided.
 - AI parse failures are marked as `invalid_response` and do **not** escalate decisions; only validated AI JSON can escalate.

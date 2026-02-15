@@ -1,6 +1,8 @@
 import argparse
 import json
+from pathlib import Path
 
+from input_gateway.config import load_config
 from input_gateway.main import run_scan
 from input_gateway.normalizer import normalize_text
 from input_gateway.rules import evaluate_rules
@@ -70,3 +72,34 @@ def test_ai_invalid_response_does_not_escalate(monkeypatch, capsys) -> None:
     payload = json.loads(out)
     assert payload["decision"] == "allow"
     assert payload["ai_assessment"]["status"] == "invalid_response"
+
+
+def test_scan_uses_legacy_mitre_overrides_when_rule_overrides_missing(capsys) -> None:
+    cfg = {
+        "log_path": "logs/audit.jsonl",
+        "db_path": "logs/gateway.db",
+        "max_input_chars": 100000,
+        "severity_weights": {"low": 0.33, "medium": 0.55, "high": 1.75},
+        "mitre_overrides": {"SQLI_KEYWORD": {"severity": "medium"}},
+        "decision_thresholds": {"warn": 0.55, "block": 1.75},
+        "ai": {"enabled": False},
+    }
+    args = argparse.Namespace(text="SELECT * FROM users", file=None, explain=False)
+    code = run_scan(args, cfg)
+
+    assert code == 0
+    out, _ = capsys.readouterr()
+    payload = json.loads(out)
+    sqli_hit = [h for h in payload["hits"] if h["rule"] == "SQLI_KEYWORD"][0]
+    assert sqli_hit["severity"] == "medium"
+
+
+def test_load_config_maps_legacy_mitre_overrides(tmp_path) -> None:
+    config_file = Path(tmp_path) / "legacy.json"
+    config_file.write_text(
+        json.dumps({"mitre_overrides": {"SQLI_KEYWORD": {"severity": "medium"}}}),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(str(config_file))
+    assert cfg["rule_overrides"]["SQLI_KEYWORD"]["severity"] == "medium"
