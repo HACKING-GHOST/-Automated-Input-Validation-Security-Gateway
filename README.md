@@ -1,65 +1,67 @@
-# Automated Input Validation & Security Gateway
+﻿# Automated Input Validation and Security Gateway
 
-A modular, CLI-first security gateway that normalizes input, evaluates configurable rules, scores risk, makes decisions, logs structured output, and stores decision history in SQLite.
+A modular, CLI-first gateway that normalizes input, evaluates rules, scores risk, makes allow/warn/block decisions, logs structured output, and stores history in SQLite.
 
 ## Project Structure
 
 ```text
 input_gateway/
-├── main.py         # CLI commands: scan, history
-├── normalizer.py   # Input normalization
-├── rules.py        # Rule engine + category tagging
-├── scorer.py       # Weighted risk score aggregation
-├── decision.py     # allow/warn/block threshold logic
-├── logger.py       # JSONL logs + SQLite persistence
-├── config.py       # JSON/YAML config loading
-├── ai_assessor.py  # Optional AI second-opinion API integration
-└── utils.py        # report/error helpers
+|- main.py         # CLI entrypoint: scan, history, ai-assess
+|- normalizer.py   # Input normalization and Unicode cleanup
+|- rules.py        # Rule engine, rule tags, overrides, optional allowlist validators
+|- scorer.py       # Weighted risk score aggregation
+|- decision.py     # allow/warn/block threshold logic
+|- logger.py       # JSONL logs and SQLite persistence
+|- config.py       # JSON/YAML config loading and validation
+|- ai_assessor.py  # Optional AI second-opinion API integration
+`- utils.py        # report/error helpers
+gateway/
+`- main.py         # wrapper entrypoint that delegates to input_gateway.main
 ```
 
-## Scoring Algorithm (current)
+## How Scoring Works
 
-Every rule hit has:
+Each hit includes:
 - `severity`: `low` / `medium` / `high`
-- `severity_weight`: configurable weight (defaults below)
-- `score`: same as the weight (additive)
+- `severity_weight`: from config
+- `score`: numeric value added to total risk
+- `tags`: internal category tags
 
 Default severity weights:
 - `low = 0.33`
 - `medium = 0.55`
 - `high = 1.75`
 
-Total risk score is the sum of all hit scores. Decision uses thresholds:
+Decision thresholds:
 - `score >= 1.75` => `block`
 - `score >= 0.55` => `warn`
-- else `allow`
-
-## Rule Metadata
-
-Rules include simple internal category tags (example: `injection`, `xss`).
-You can override rule severity/reason using `rule_overrides` in config to align with your threat intel process.
-
-## Optional AI Assessment
-
-If enabled in config, an OpenAI-compatible API is called after rule scoring.
-AI response can escalate decision (`allow -> warn -> block`) but never de-escalates it.
+- else => `allow`
 
 ## CLI Commands
 
-### Scan input
-
+Scan input:
 ```bash
 python -m input_gateway.main scan --text "SELECT * FROM users"
 python -m input_gateway.main scan --file ./sample.txt --explain
 ```
 
-### Show recent decision history
-
+Show decision history:
 ```bash
 python -m input_gateway.main history --limit 20
 ```
 
-## Config (JSON or YAML)
+Run AI assessment only:
+```bash
+python -m input_gateway.main ai-assess --text "example input"
+python -m input_gateway.main ai-assess --file ./sample.txt --config-report ./report.json
+```
+
+Alternative wrapper entrypoint:
+```bash
+python -m gateway.main scan --text "hello"
+```
+
+## Configuration (JSON or YAML)
 
 ```json
 {
@@ -73,25 +75,38 @@ python -m input_gateway.main history --limit 20
   },
   "ai": {
     "enabled": false,
-    "endpoint": "https://your-openai-compatible-endpoint/v1/chat/completions",
+    "provider": "openai-compatible",
+    "endpoint": "https://api.openai.com/v1/chat/completions",
     "api_key": "",
-    "model": "",
-    "timeout_s": 8
+    "model": "gpt-5.2-chat",
+    "timeout_s": 30
   }
 }
 ```
 
-If `ai.enabled` is `true`, set `ai.api_key` in config or provide it via env var `AIVSG_AI_API_KEY` or `OPENAI_API_KEY`.
+Notes:
+- `ai.enabled` defaults to `false`.
+- If `ai.enabled` is `true`, `ai.endpoint`, `ai.model`, and `ai.api_key` are required.
+- `ai.api_key` can come from config or environment variable `AIVSG_AI_API_KEY` / `OPENAI_API_KEY`.
+- Both `rule_overrides` and legacy `mitre_overrides` are accepted and normalized.
+- JSON config files with UTF-8 BOM are supported.
+
+## Rule Engine Behavior
+
+- Default scan uses detection rules (`SQLI_KEYWORD`, `COMMAND_INJECTION`, `XSS_PATTERN`, `PATH_TRAVERSAL`) plus heuristic rules (`LENGTH_ANOMALY`, `SPECIAL_CHAR_DENSITY`, `REPETITION_PATTERN`).
+- Format/allowlist validators (`EMAIL_FORMAT`, `INTEGER_ONLY`, etc.) are available for targeted usage through `evaluate_rules(..., active_rule_names=[...])`.
+- Invalid regex patterns are safely skipped instead of crashing scans.
 
 ## Tests
 
 ```bash
-pytest -q
+python -m pytest -q
 ```
 
-## Reliability Safeguards
+## Reliability and Hardening Notes
 
-- `scan` now wraps logger initialization inside the fail-safe path so DB/path failures still return structured JSON block errors (no traceback leaks).
-- `rule_overrides` severity values are normalized/validated; invalid values fall back to the rule default severity, preventing accidental zero-risk bypasses.
-- Backward compatibility is preserved: legacy `mitre_overrides` configs are still honored when `rule_overrides` is not provided.
-- AI parse failures are marked as `invalid_response` and do **not** escalate decisions; only validated AI JSON can escalate.
+- `scan`, `history`, and `ai-assess` return structured fail-safe block errors on runtime failures.
+- AI failures do not crash scans; only validated AI responses can escalate decisions.
+- Config validation enforces types, ranges, and threshold ordering.
+- Decision and scoring logic handle invalid/non-finite inputs safely.
+- Logger operations normalize malformed report fields before persistence.
