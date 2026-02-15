@@ -10,7 +10,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "max_input_chars": 100000,
     "log_path": "logs/audit.jsonl",
     "db_path": "logs/gateway.db",
-    "mitre_overrides": {},
+    "rule_overrides": {},
     "ai": {
         "enabled": False,
         "provider": "openai-compatible",
@@ -57,4 +57,9 @@ def load_config(config_path: str | None) -> Dict[str, Any]:
             merged[key] = {**DEFAULT_CONFIG[key], **value}
         else:
             merged[key] = value
+
+    legacy = merged.get("mitre_overrides")
+    if "rule_overrides" not in custom and isinstance(legacy, dict):
+        merged["rule_overrides"] = legacy
+
     return merged
